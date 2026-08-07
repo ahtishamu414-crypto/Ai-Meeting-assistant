@@ -1,48 +1,133 @@
+import json
 import re
 import subprocess
+
+import ollama
 
 
 def clean_summary(text: str) -> str:
     """
-    Remove ANSI escape sequences and extra whitespace.
+    Remove ANSI escape sequences and markdown.
     """
-    # Remove terminal escape codes
-    text = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", text)
 
-    # Remove multiple spaces/newlines
-    text = " ".join(text.split())
+    text = re.sub(
+        r"\x1B\[[0-?]*[ -/]*[@-~]",
+        "",
+        text,
+    )
 
-    return text
+    text = text.strip()
+
+    if text.startswith("```json"):
+        text = text.replace("```json", "").replace("```", "")
+
+    elif text.startswith("```"):
+        text = text.replace("```", "")
+
+    return text.strip()
 
 
-def summarize_text(text: str, model: str = "llama3.2:3b") -> str:
+def empty_summary():
+    return {
+        "meeting_title": "",
+        "summary": "",
+        "topics": [],
+        "decisions": [],
+        "open_questions": [],
+        "key_points": [],
+        "action_items": [],
+    }
+
+
+def validate_json(data: dict) -> dict:
     """
-    Summarize a meeting transcript using Ollama.
+    Ensure all required keys exist.
+    """
 
-    It first tries the Python Ollama package.
-    If that fails, it falls back to the Ollama CLI.
+    defaults = empty_summary()
+
+    for key, value in defaults.items():
+        data.setdefault(key, value)
+
+    return data
+
+
+def summarize_text(
+    text: str,
+    model: str = "llama3.2:3b",
+):
+    """
+    Analyze meeting transcript and return structured JSON.
     """
 
     prompt = f"""
-You are an AI Meeting Assistant.
+You are an AI Meeting Intelligence Assistant.
 
-Summarize ONLY the information explicitly mentioned in the transcript.
+Analyze the following meeting transcript.
+
+Return ONLY valid JSON.
+
+Do NOT use markdown.
+Do NOT explain anything.
+Do NOT write any extra text.
+
+Use exactly this schema:
+
+{{
+    "meeting_title": "",
+    "summary": "",
+    "topics": [],
+    "decisions": [],
+    "open_questions": [],
+    "key_points": [],
+    "action_items": [
+        {{
+            "task": "",
+            "owner": "",
+            "due_date": ""
+        }}
+    ]
+}}
 
 Rules:
-- Do not invent names or facts.
-- Do not assume context.
-- Keep the summary between 3 and 5 sentences.
-- Return plain text only.
+
+meeting_title
+- Create a short descriptive title.
+
+summary
+- Write 2-3 concise sentences.
+
+topics
+- Extract the discussion topics.
+
+decisions
+- Extract only confirmed decisions.
+
+open_questions
+- Extract unresolved questions.
+
+key_points
+- List the most important discussion points.
+
+action_items
+- Only include tasks that were explicitly assigned.
+- Never invent owners.
+- Never invent due dates.
+- If owner is missing use:
+  "Not specified"
+- If due date is missing use:
+  "Not specified"
 
 Transcript:
+
 {text}
 """
 
-    # -----------------------------
-    # Try Python Ollama package
-    # -----------------------------
+    # ----------------------------
+    # Method 1 - Python API
+    # ----------------------------
+
     try:
-        import ollama
 
         response = ollama.chat(
             model=model,
@@ -52,33 +137,63 @@ Transcript:
                     "content": prompt,
                 }
             ],
+            format="json",
+            options={
+                "temperature": 0,
+            },
         )
 
-        summary = response["message"]["content"]
-        return clean_summary(summary)
+        output = clean_summary(
+            response["message"]["content"]
+        )
 
-    except Exception:
-        pass
+        data = json.loads(output)
 
-    # -----------------------------
-    # Fallback to Ollama CLI
-    # -----------------------------
+        return validate_json(data)
+
+    except json.JSONDecodeError:
+        print("Invalid JSON returned by Ollama.")
+
+    except Exception as e:
+        print("Ollama Python Error:", e)
+
+    # ----------------------------
+    # Method 2 - CLI
+    # ----------------------------
+
     try:
-        proc = subprocess.run(
-            ["ollama", "run", model],
+
+        process = subprocess.run(
+            [
+                "ollama",
+                "run",
+                model,
+            ],
             input=prompt,
             capture_output=True,
             text=True,
             timeout=120,
         )
 
-        if proc.returncode == 0:
-            return clean_summary(proc.stdout)
+        if process.returncode == 0:
 
-        return f"Ollama CLI error: {proc.stderr.strip()}"
+            output = clean_summary(process.stdout)
+
+            try:
+                data = json.loads(output)
+
+                return validate_json(data)
+
+            except json.JSONDecodeError:
+                print("CLI returned invalid JSON.")
+
+        else:
+            print(process.stderr)
 
     except FileNotFoundError:
-        return "Summarization unavailable: Ollama is not installed."
+        print("Ollama CLI not installed.")
 
-    except Exception as exc:
-        return f"Summarization unavailable: {exc}"
+    except Exception as e:
+        print("Ollama CLI Error:", e)
+
+    return empty_summary()
