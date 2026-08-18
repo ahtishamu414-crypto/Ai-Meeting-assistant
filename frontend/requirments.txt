@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pymongo
+python-dotenv
+
+openai-whisper
+torch
+numpy
+
+requests
+
+slack-sdk
+jira
+
+sentence-transformers
+scikit-learn

@@ -1,36 +1,92 @@
 import axios from "axios";
 
-const API = axios.create({
-  baseURL: "http://127.0.0.1:8000",
+/* =========================================================
+   API CONFIG
+========================================================= */
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  "http://127.0.0.1:8000";
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
   headers: {
-    "Content-Type": "application/json",
+    Accept: "application/json",
   },
 });
 
 /* =========================================================
-   ERROR HELPER
+   ERROR HANDLER
 ========================================================= */
 
-export function getApiError(error, fallback = "Something went wrong.") {
-  const detail = error?.response?.data?.detail;
-
-  if (typeof detail === "string") {
-    return detail;
+export function getApiError(
+  error,
+  fallback = "Something went wrong."
+) {
+  if (!error) {
+    return fallback;
   }
 
-  if (detail && typeof detail === "object") {
-    return (
-      detail.message ||
-      detail.error ||
-      JSON.stringify(detail)
-    );
+  // Axios response error
+  if (error.response) {
+    const data = error.response.data;
+
+    if (typeof data === "string") {
+      return data;
+    }
+
+    if (data?.detail) {
+      if (typeof data.detail === "string") {
+        return data.detail;
+      }
+
+      if (Array.isArray(data.detail)) {
+        return data.detail
+          .map((item) => {
+            if (typeof item === "string") {
+              return item;
+            }
+
+            return (
+              item?.msg ||
+              item?.message ||
+              JSON.stringify(item)
+            );
+          })
+          .join(", ");
+      }
+
+      if (typeof data.detail === "object") {
+        return (
+          data.detail?.message ||
+          data.detail?.msg ||
+          JSON.stringify(data.detail)
+        );
+      }
+    }
+
+    if (data?.message) {
+      return typeof data.message === "string"
+        ? data.message
+        : JSON.stringify(data.message);
+    }
+
+    if (data?.error) {
+      return typeof data.error === "string"
+        ? data.error
+        : JSON.stringify(data.error);
+    }
+
+    return `Request failed with status ${error.response.status}.`;
   }
 
-  if (typeof error?.response?.data === "string") {
-    return error.response.data;
+  // Request was made but no response received
+  if (error.request) {
+    return "Cannot connect to the backend. Make sure FastAPI is running.";
   }
 
-  if (error?.message) {
+  // Something else went wrong
+  if (error.message) {
     return error.message;
   }
 
@@ -38,59 +94,196 @@ export function getApiError(error, fallback = "Something went wrong.") {
 }
 
 /* =========================================================
+   NORMALIZE ID
+========================================================= */
+
+function cleanMeetingId(meetingId) {
+  return String(meetingId ?? "").trim();
+}
+
+/* =========================================================
    MEETINGS
 ========================================================= */
 
-export const getMeetings = async () => {
-  const response = await API.get("/meetings");
+export async function getMeetings() {
+  const response = await api.get("/meetings");
+
   return response.data;
-};
+}
+
+/* =========================================================
+   SINGLE MEETING
+========================================================= */
+
+export async function getMeeting(meetingId) {
+  const cleanId = cleanMeetingId(meetingId);
+
+  if (!cleanId) {
+    throw new Error("Meeting ID is required.");
+  }
+
+  const response = await api.get(
+    `/meetings/${encodeURIComponent(cleanId)}`
+  );
+
+  return response.data;
+}
 
 /* =========================================================
    ACTION ITEMS
 ========================================================= */
 
-export const getActionItems = async () => {
-  const response = await API.get("/action-items");
-  return response.data;
-};
+export async function getActionItems() {
+  const response = await api.get("/action-items");
 
-export const updateActionItem = async (
+  return response.data;
+}
+
+/* =========================================================
+   UPDATE ACTION ITEM
+========================================================= */
+
+export async function updateActionItem(
   meetingId,
   actionIndex,
   status
-) => {
-  const response = await API.patch(
-    `/action-items/${meetingId}/${actionIndex}`,
+) {
+  const cleanId = cleanMeetingId(meetingId);
+  const cleanIndex = Number(actionIndex);
+
+  const allowedStatuses = [
+    "pending",
+    "in_progress",
+    "completed",
+  ];
+
+  if (!cleanId) {
+    throw new Error("Meeting ID is missing.");
+  }
+
+  if (!Number.isInteger(cleanIndex)) {
+    throw new Error("Action index must be an integer.");
+  }
+
+  if (!allowedStatuses.includes(status)) {
+    throw new Error(
+      `Invalid status "${status}". Use pending, in_progress, or completed.`
+    );
+  }
+
+  console.log("PATCH action item:", {
+    meetingId: cleanId,
+    actionIndex: cleanIndex,
+    status,
+  });
+
+  const response = await api.patch(
+    `/action-items/${encodeURIComponent(cleanId)}/${cleanIndex}`,
     {
-      status: status,
+      status,
     }
   );
 
   return response.data;
-};
-
-export const askQuestion = async (question) => {
-  const response = await API.post("/ask", { question });
-  return response.data;
-};
+}
 
 /* =========================================================
-   UPLOAD MEETING
+   ASK AI
 ========================================================= */
 
-export const uploadMeeting = async (file) => {
-  const formData = new FormData();
+export async function askQuestion(question) {
+  const cleanQuestion = String(question ?? "").trim();
 
-  formData.append("file", file);
+  if (!cleanQuestion) {
+    throw new Error("Question cannot be empty.");
+  }
 
-  const response = await API.post("/upload", formData, {
-    headers: {
-      "Content-Type": "multipart/form-data",
+  const response = await api.post("/ask", {
+    question: cleanQuestion,
+  });
+
+  return response.data;
+}
+
+/* =========================================================
+   SEMANTIC SEARCH
+========================================================= */
+
+export async function searchMeetings(query) {
+  const cleanQuery = String(query ?? "").trim();
+
+  if (!cleanQuery) {
+    return [];
+  }
+
+  const response = await api.get("/search", {
+    params: {
+      query: cleanQuery,
     },
   });
 
   return response.data;
-};
+}
 
-export default API;
+/* =========================================================
+   UPLOAD RECORDING
+========================================================= */
+
+export async function uploadRecording(
+  file,
+  onUploadProgress
+) {
+  if (!file) {
+    throw new Error("Please select an audio file.");
+  }
+
+  const formData = new FormData();
+
+  formData.append("file", file);
+
+  const response = await api.post(
+    "/upload",
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+      onUploadProgress,
+    }
+  );
+
+  return response.data;
+}
+
+/* =========================================================
+   FORMAT DATE
+========================================================= */
+
+export function formatDate(value) {
+  if (!value) {
+    return "Date unavailable";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString();
+}
+/* =========================================================
+   ZOOM STATUS
+========================================================= */
+
+export async function getZoomStatus() {
+  const response = await api.get("/zoom/status");
+
+  return response.data;
+}
+
+/* =========================================================
+   EXPORT
+========================================================= */
+
+export default api;
