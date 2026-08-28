@@ -7,15 +7,28 @@ from app.services.rag import ask_meeting
 router = APIRouter()
 
 
+# ============================================================
+# REQUEST MODEL
+# ============================================================
+
 class QuestionRequest(BaseModel):
     question: str
+    top_k: int = 3
 
 
-@router.post("/ask")
-async def ask_question(
+# ============================================================
+# QUESTION ENDPOINT
+# ============================================================
+
+@router.post("/question")
+async def question(
     request: QuestionRequest
 ):
+    """
+    Ask a question about stored meetings.
+    """
 
     return ask_meeting(
-        request.question
+        question=request.question,
+        top_k=request.top_k
     )

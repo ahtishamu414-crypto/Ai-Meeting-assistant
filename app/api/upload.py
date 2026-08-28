@@ -2,6 +2,7 @@ import os
 import shutil
 import json
 import uuid
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -38,6 +39,47 @@ ALLOWED_EXTENSIONS = {
     ".m4a",
     ".ogg",
 }
+
+
+# ============================================================
+# EXTRACT SPEAKERS FROM TRANSCRIPT
+# ============================================================
+
+def extract_speakers(transcript: str) -> list:
+    """
+    Extract unique speaker labels from the diarized transcript.
+
+    Example transcript:
+
+    [00:00 - 00:04] SPEAKER_01
+    Hello...
+
+    [00:04 - 00:09] SPEAKER_00
+    Hi...
+
+    Returns:
+
+    [
+        "SPEAKER_01",
+        "SPEAKER_00"
+    ]
+    """
+
+    speakers = []
+
+    pattern = r"\]\s+(SPEAKER_\d+)"
+
+    matches = re.findall(
+        pattern,
+        transcript
+    )
+
+    for speaker in matches:
+
+        if speaker not in speakers:
+            speakers.append(speaker)
+
+    return speakers
 
 
 # ============================================================
@@ -115,12 +157,12 @@ async def upload_audio(
 
 
     # ========================================================
-    # 4. TRANSCRIPTION
+    # 4. TRANSCRIPTION + SPEAKER DIARIZATION
     # ========================================================
 
-    print(
-        "Starting transcription..."
-    )
+    print("\n========================================")
+    print("Starting transcription...")
+    print("========================================")
 
 
     try:
@@ -131,6 +173,11 @@ async def upload_audio(
 
     except Exception as e:
 
+        print(
+            "❌ Transcription error:",
+            e
+        )
+
         raise HTTPException(
             status_code=500,
             detail=f"Transcription failed: {e}"
@@ -138,7 +185,33 @@ async def upload_audio(
 
 
     print(
-        "Transcription completed"
+        "✅ Transcription completed"
+    )
+
+
+    # ========================================================
+    # 4.1 EXTRACT SPEAKERS
+    # ========================================================
+
+    speakers = extract_speakers(
+        transcript
+    )
+
+
+    speaker_count = len(
+        speakers
+    )
+
+
+    print(
+        "Detected speakers:",
+        speakers
+    )
+
+
+    print(
+        "Speaker count:",
+        speaker_count
     )
 
 
@@ -175,7 +248,7 @@ async def upload_audio(
     # ========================================================
 
     print(
-        "Generating meeting analysis..."
+        "\nGenerating meeting analysis..."
     )
 
 
@@ -244,7 +317,7 @@ async def upload_audio(
 
 
     # ========================================================
-    # 8. EXTRACT DATA
+    # 8. EXTRACT MEETING DATA
     # ========================================================
 
     meeting_title = summary_data.get(
@@ -287,7 +360,86 @@ async def upload_audio(
         "action_items",
         []
     )
+    # ========================================================
+    # NORMALIZE ACTION ITEMS
+    # ========================================================
 
+    normalized_action_items = []
+
+    for item in action_items:
+
+        if not isinstance(item, dict):
+            continue
+
+        item["action_id"] = (
+            item.get("action_id")
+            or uuid.uuid4().hex[:12]
+        )
+
+        item.setdefault(
+            "task",
+            ""
+        )
+
+        item.setdefault(
+            "owner",
+            "Not specified"
+        )
+
+        item.setdefault(
+            "due_date",
+            "Not specified"
+        )
+
+        item.setdefault(
+            "status",
+            "pending"
+        )
+
+        normalized_action_items.append(item)
+
+
+    action_items = normalized_action_items
+    # ========================================================
+    # ADD STABLE IDs TO ACTION ITEMS
+    # ========================================================
+
+    normalized_action_items = []
+
+    for item in action_items:
+
+        if not isinstance(item, dict):
+         continue
+
+        item["action_id"] = item.get(
+        "action_id",
+            uuid.uuid4().hex[:8]
+        )
+
+        item.setdefault(
+            "task",
+            ""
+        )
+
+        item.setdefault(
+            "owner",
+            "Not specified"
+        )
+
+        item.setdefault(
+            "due_date",
+            "Not specified"
+        )
+
+        item.setdefault(
+            "status",
+            "pending"
+        )
+
+        normalized_action_items.append(item)
+
+
+    action_items = normalized_action_items  
 
     # ========================================================
     # 9. SAVE SUMMARY JSON
@@ -360,7 +512,7 @@ async def upload_audio(
     # ========================================================
 
     print(
-        "Generating embedding..."
+        "\nGenerating embedding..."
     )
 
 
@@ -388,7 +540,7 @@ async def upload_audio(
 
 
         # ----------------------------------------------------
-        # Verify embedding
+        # VERIFY EMBEDDING
         # ----------------------------------------------------
 
         if len(embedding) != 384:
@@ -430,8 +582,26 @@ async def upload_audio(
         "uploaded_at":
             datetime.utcnow(),
 
+        # ----------------------------------------------------
+        # SPEAKER INFORMATION
+        # ----------------------------------------------------
+
+        "speakers":
+            speakers,
+
+        "speaker_count":
+            speaker_count,
+
+        # ----------------------------------------------------
+        # TRANSCRIPT
+        # ----------------------------------------------------
+
         "transcript":
             transcript,
+
+        # ----------------------------------------------------
+        # MEETING ANALYSIS
+        # ----------------------------------------------------
 
         "meeting_title":
             meeting_title,
@@ -454,6 +624,10 @@ async def upload_audio(
         "action_items":
             action_items,
 
+        # ----------------------------------------------------
+        # EMBEDDING
+        # ----------------------------------------------------
+
         "embedding":
             embedding
     }
@@ -464,7 +638,7 @@ async def upload_audio(
     # ========================================================
 
     print(
-        "Saving meeting to MongoDB..."
+        "\nSaving meeting to MongoDB..."
     )
 
 
@@ -494,7 +668,10 @@ async def upload_audio(
 
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to save meeting to database: {e}"
+            detail=(
+                "Failed to save meeting to database: "
+                f"{e}"
+            )
         )
 
 
@@ -505,7 +682,7 @@ async def upload_audio(
     try:
 
         print(
-            "Sending Slack notification..."
+            "\nSending Slack notification..."
         )
 
 
@@ -535,6 +712,7 @@ async def upload_audio(
     except Exception as e:
 
         # Slack failure should NOT delete the meeting
+
         print(
             "Slack Error:",
             e
@@ -548,7 +726,7 @@ async def upload_audio(
     try:
 
         print(
-            "Creating Jira issues..."
+            "\nCreating Jira issues..."
         )
 
 
@@ -568,6 +746,7 @@ async def upload_audio(
     except Exception as e:
 
         # Jira failure should NOT delete the meeting
+
         print(
             "Jira Error:",
             e
@@ -577,6 +756,19 @@ async def upload_audio(
     # ========================================================
     # 16. RETURN RESPONSE
     # ========================================================
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        "✅ MEETING PROCESSING COMPLETED"
+    )
+
+    print(
+        "========================================"
+    )
+
 
     return {
 
@@ -589,8 +781,26 @@ async def upload_audio(
         "filename":
             unique_name,
 
+        # ----------------------------------------------------
+        # SPEAKER INFORMATION
+        # ----------------------------------------------------
+
+        "speakers":
+            speakers,
+
+        "speaker_count":
+            speaker_count,
+
+        # ----------------------------------------------------
+        # TRANSCRIPT
+        # ----------------------------------------------------
+
         "transcript":
             transcript,
+
+        # ----------------------------------------------------
+        # MEETING ANALYSIS
+        # ----------------------------------------------------
 
         "meeting_title":
             meeting_title,
