@@ -6,3 +6,6 @@ __pycache__/
 uploads/
 transcripts/
 frontend/node_modules/
+recordings/
+*.wav
+*.log

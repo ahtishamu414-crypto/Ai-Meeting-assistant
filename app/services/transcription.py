@@ -38,7 +38,7 @@ def get_models():
             MODEL_NAME
         )
 
-        print("✅ Whisper model loaded")
+        print("Whisper model loaded")
 
     # --------------------------------------------------------
     # PYANNOTE
@@ -62,7 +62,7 @@ def get_models():
         )
 
         print(
-            "✅ Speaker diarization model loaded"
+            "Speaker diarization model loaded"
         )
 
 
@@ -137,7 +137,7 @@ def convert_to_clean_wav(
             )
 
         print(
-            f"✅ Clean WAV created: {output_file}"
+            f"Clean WAV created: {output_file}"
         )
 
         return output_file
@@ -347,7 +347,7 @@ def transcribe_audio(
             )
 
         print(
-            "✅ Speaker-labeled transcription completed"
+            "Speaker-labeled transcription completed"
         )
 
         return final_transcript
@@ -355,7 +355,7 @@ def transcribe_audio(
     except Exception as e:
 
         print(
-            "❌ Transcription error:",
+            "Transcription error:",
             e
         )
 

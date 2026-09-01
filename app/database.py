@@ -75,12 +75,12 @@ try:
     )
 
     print(
-        "✅ MongoDB connected successfully."
+        "MongoDB connected successfully."
     )
 
 except Exception as e:
 
     print(
-        "❌ MongoDB connection failed:",
+        "MongoDB connection failed:",
         e
     )

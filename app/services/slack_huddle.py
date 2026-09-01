@@ -2,6 +2,8 @@ import logging
 from datetime import datetime, timezone
 
 from app.database import db
+from app.services.slack_recorder import start_recording, stop_recording
+from app.services.slack_pipeline import trigger_slack_meeting_processing
 
 
 # ============================================================
@@ -544,6 +546,21 @@ def handle_huddle_started(event):
     meeting["_id"] = result.inserted_id
 
     # ========================================================
+    # START LOCAL RECORDER
+    # ========================================================
+
+    try:
+
+        start_recording(huddle_id)
+
+    except Exception:
+
+        logger.exception(
+            "SLACK RECORDER START FAILED | huddle_id=%s",
+            huddle_id
+        )
+
+    # ========================================================
     # LOG
     # ========================================================
 
@@ -567,6 +584,93 @@ def handle_huddle_started(event):
 # ============================================================
 # PARTICIPANT JOIN
 # ============================================================
+
+def _create_huddle_from_join(user_id, huddle_id):
+    """
+    Create a new active Huddle document from the first
+    user_huddle_changed(in_a_huddle) join event.
+
+    On this workspace, the room-based Huddle message event
+    (handle_huddle_started) is only ever delivered AFTER the
+    Huddle has already ended (room.has_ended arrives True on
+    the first and only such event). The participant join
+    event is therefore the only reliable real-time signal
+    that a Huddle has actually started, so the Mongo document
+    and the local recorder are both started from here.
+
+    Uses an atomic upsert so two near-simultaneous joins for
+    the same brand-new huddle_id cannot create duplicate
+    documents or start the recorder twice.
+
+    Fields unavailable at join time (channel_id, creator_id,
+    huddle_link, external_unique_id) are backfilled later by
+    handle_huddle_ended once the room message finally arrives.
+    """
+
+    now = datetime.now(timezone.utc)
+
+    result = slack_meetings_collection.update_one(
+        {
+            "huddle_id": huddle_id
+        },
+        {
+            "$setOnInsert": {
+                "meeting_type": "slack_huddle",
+                "huddle_id": huddle_id,
+                "external_unique_id": None,
+                "channel_id": None,
+                "creator_id": user_id,
+                "huddle_link": None,
+                "started_at": now,
+                "ended_at": None,
+                "duration_seconds": None,
+                "status": "active",
+                "participants": [user_id],
+                "active_participants": [user_id],
+                "processing_status": "pending",
+                "audio_file": None,
+                "transcript": None,
+                "summary": None,
+                "topics": [],
+                "decisions": [],
+                "open_questions": [],
+                "key_points": [],
+                "action_items": [],
+                "embedding": None,
+                "created_at": now,
+                "updated_at": now
+            }
+        },
+        upsert=True
+    )
+
+    if result.upserted_id:
+
+        logger.info(
+            "SLACK HUDDLE CREATED FROM JOIN | "
+            "mongo_id=%s | huddle_id=%s | creator=%s",
+            result.upserted_id,
+            huddle_id,
+            user_id
+        )
+
+        try:
+
+            start_recording(huddle_id)
+
+        except Exception:
+
+            logger.exception(
+                "SLACK RECORDER START FAILED | huddle_id=%s",
+                huddle_id
+            )
+
+    return slack_meetings_collection.find_one(
+        {
+            "huddle_id": huddle_id
+        }
+    )
+
 
 def add_participant(
     user_id,
@@ -594,6 +698,13 @@ def add_participant(
         huddle_id=huddle_id,
         user_id=user_id
     )
+
+    if not meeting and huddle_id:
+
+        meeting = _create_huddle_from_join(
+            user_id=user_id,
+            huddle_id=huddle_id
+        )
 
     if not meeting:
 
@@ -986,6 +1097,23 @@ def handle_huddle_ended(event):
     )
 
     # ========================================================
+    # STOP LOCAL RECORDER
+    # ========================================================
+
+    audio_path = None
+
+    try:
+
+        audio_path = stop_recording(huddle_id)
+
+    except Exception:
+
+        logger.exception(
+            "SLACK RECORDER STOP FAILED | huddle_id=%s",
+            huddle_id
+        )
+
+    # ========================================================
     # UPDATE
     # ========================================================
 
@@ -1008,6 +1136,43 @@ def handle_huddle_ended(event):
             timezone.utc
         )
     }
+
+    if audio_path:
+        update_data["audio_file"] = audio_path
+
+    # ========================================================
+    # BACKFILL ROOM METADATA
+    # ========================================================
+    #
+    # Huddles created from a participant join event
+    # (_create_huddle_from_join) have no channel_id,
+    # creator_id, huddle_link, or external_unique_id yet,
+    # since that event carries no room data. This is the
+    # first time the real room object is available, so fill
+    # in whatever the existing document is still missing.
+
+    channels = room.get("channels", [])
+
+    channel_id = (
+        event.get("channel")
+        or (
+            channels[0]
+            if isinstance(channels, list) and channels
+            else None
+        )
+    )
+
+    if not meeting.get("channel_id") and channel_id:
+        update_data["channel_id"] = channel_id
+
+    if not meeting.get("creator_id") and room.get("created_by"):
+        update_data["creator_id"] = room.get("created_by")
+
+    if not meeting.get("huddle_link") and room.get("huddle_link"):
+        update_data["huddle_link"] = room.get("huddle_link")
+
+    if not meeting.get("external_unique_id") and room.get("external_unique_id"):
+        update_data["external_unique_id"] = room.get("external_unique_id")
 
     slack_meetings_collection.update_one(
         {
@@ -1046,6 +1211,24 @@ def handle_huddle_ended(event):
         duration_seconds,
         final_participants
     )
+
+    # ========================================================
+    # TRIGGER AI PROCESSING (transcript/summary/action items/
+    # embedding), in the background. Safe to call even on a
+    # duplicate delivery - trigger_slack_meeting_processing()
+    # only starts the pipeline once per huddle_id.
+    # ========================================================
+
+    try:
+
+        trigger_slack_meeting_processing(huddle_id)
+
+    except Exception:
+
+        logger.exception(
+            "SLACK PIPELINE TRIGGER FAILED | huddle_id=%s",
+            huddle_id
+        )
 
     return updated
 
