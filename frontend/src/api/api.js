@@ -145,11 +145,11 @@ export async function getActionItems() {
 
 export async function updateActionItem(
   meetingId,
-  actionIndex,
+  actionId,
   status
 ) {
   const cleanId = cleanMeetingId(meetingId);
-  const cleanIndex = Number(actionIndex);
+  const cleanActionId = String(actionId ?? "").trim();
 
   const allowedStatuses = [
     "pending",
@@ -161,8 +161,8 @@ export async function updateActionItem(
     throw new Error("Meeting ID is missing.");
   }
 
-  if (!Number.isInteger(cleanIndex)) {
-    throw new Error("Action index must be an integer.");
+  if (!cleanActionId) {
+    throw new Error("Action ID is missing.");
   }
 
   if (!allowedStatuses.includes(status)) {
@@ -173,12 +173,12 @@ export async function updateActionItem(
 
   console.log("PATCH action item:", {
     meetingId: cleanId,
-    actionIndex: cleanIndex,
+    actionId: cleanActionId,
     status,
   });
 
   const response = await api.patch(
-    `/action-items/${encodeURIComponent(cleanId)}/${cleanIndex}`,
+    `/action-items/${encodeURIComponent(cleanId)}/${encodeURIComponent(cleanActionId)}`,
     {
       status,
     }
@@ -198,7 +198,7 @@ export async function askQuestion(question) {
     throw new Error("Question cannot be empty.");
   }
 
-  const response = await api.post("/ask", {
+  const response = await api.post("/question", {
     question: cleanQuestion,
   });
 
@@ -216,10 +216,8 @@ export async function searchMeetings(query) {
     return [];
   }
 
-  const response = await api.get("/search", {
-    params: {
-      query: cleanQuery,
-    },
+  const response = await api.post("/search", {
+    query: cleanQuery,
   });
 
   return response.data;
@@ -273,11 +271,25 @@ export function formatDate(value) {
   return date.toLocaleString();
 }
 /* =========================================================
-   ZOOM STATUS
+   SLACK MEETINGS
 ========================================================= */
 
-export async function getZoomStatus() {
-  const response = await api.get("/zoom/status");
+export async function getSlackMeetings() {
+  const response = await api.get("/slack/meetings");
+
+  return response.data;
+}
+
+export async function getSlackMeeting(meetingId) {
+  const cleanId = cleanMeetingId(meetingId);
+
+  if (!cleanId) {
+    throw new Error("Meeting ID is required.");
+  }
+
+  const response = await api.get(
+    `/slack/meetings/${encodeURIComponent(cleanId)}`
+  );
 
   return response.data;
 }

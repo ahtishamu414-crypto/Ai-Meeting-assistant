@@ -23,7 +23,8 @@ import {
   askQuestion,
   searchMeetings,
   uploadRecording,
-  getZoomStatus,
+  getSlackMeetings,
+  getSlackMeeting,
   formatDate,
   getApiError,
 } from "./api/api";
@@ -203,6 +204,7 @@ function Layout({ children }) {
   const links = [
     { to: "/", label: "Dashboard", icon: "▦" },
     { to: "/meetings", label: "Meetings", icon: "◫" },
+    { to: "/slack-meetings", label: "Slack Meetings", icon: "◈" },
     { to: "/action-items", label: "Action Items", icon: "✓" },
     { to: "/ask", label: "Ask AI", icon: "✦" },
     { to: "/search", label: "Semantic Search", icon: "⌕" },
@@ -472,153 +474,326 @@ function UploadPanel({ onUploaded, pushToast }) {
 }
  
 /* =========================================================
-   ZOOM INTEGRATION STATUS
+   SLACK MEETINGS
 ========================================================= */
- 
-function ZoomIntegration() {
-  const [status, setStatus] = useState(null);
+
+function formatHuddleDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins === 0) return `${secs}s`;
+  return `${mins}m ${secs}s`;
+}
+
+function SlackMeetings() {
+  const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
- 
-  async function loadStatus() {
+
+  async function loadMeetings() {
     try {
       setLoading(true);
       setError("");
- 
-      const data = await getZoomStatus();
-      setStatus(data);
+
+      const data = await getSlackMeetings();
+      const list = Array.isArray(data?.meetings) ? data.meetings : [];
+      setMeetings(list);
     } catch (err) {
-      console.error("Zoom status error:", err);
-      setError(getApiError(err, "Could not load Zoom status."));
+      console.error("Slack meetings error:", err);
+      setError(getApiError(err, "Could not load Slack meetings."));
     } finally {
       setLoading(false);
     }
   }
- 
+
   useEffect(() => {
-    loadStatus();
- 
-    const interval = setInterval(loadStatus, 10000);
- 
+    queueMicrotask(loadMeetings);
+
+    const interval = setInterval(loadMeetings, 10000);
+
     return () => clearInterval(interval);
   }, []);
- 
-  if (loading && !status) {
+
+  if (loading && meetings.length === 0 && !error) {
     return (
-      <div className="panel zoom-integration">
+      <div className="panel slack-meetings">
         <div className="panel-header">
-          <h2>Zoom Integration</h2>
+          <h2>Slack Meetings</h2>
         </div>
- 
-        <Loading message="Checking Zoom connection..." />
+
+        <Loading message="Checking Slack Huddles..." />
       </div>
     );
   }
- 
+
   if (error) {
     return (
-      <div className="panel zoom-integration">
+      <div className="panel slack-meetings">
         <div className="panel-header">
-          <h2>Zoom Integration</h2>
+          <h2>Slack Meetings</h2>
         </div>
- 
-        <ErrorPanel message={error} onRetry={loadStatus} />
+
+        <ErrorPanel message={error} onRetry={loadMeetings} />
       </div>
     );
   }
- 
-  const watcherRunning = status?.watcher === "running";
-  const chatConnected = status?.zoom_chat === "connected";
- 
+
+  const activeCount = meetings.filter((m) => m.status === "active").length;
+
   return (
-    <div className="panel zoom-integration">
+    <div className="panel slack-meetings">
       <div className="panel-header">
         <div>
-          <h2>Zoom Integration</h2>
-          <p className="panel-subtitle">Automatic meeting processing pipeline</p>
+          <h2>Slack Meetings</h2>
+          <p className="panel-subtitle">
+            {activeCount > 0
+              ? `${activeCount} Huddle${activeCount === 1 ? "" : "s"} in progress`
+              : "Slack Huddle processing pipeline"}
+          </p>
         </div>
- 
-        <button type="button" className="secondary-button" onClick={loadStatus}>
+
+        <button type="button" className="secondary-button" onClick={loadMeetings}>
           ↻ Refresh
         </button>
       </div>
- 
-      <div className="zoom-status-grid">
-        <ZoomStatusItem
-          icon="🎙"
-          title="Recording Watcher"
-          description="Automatically detects completed Zoom recordings."
-          connected={watcherRunning}
-        />
- 
-        <ZoomStatusItem
-          icon="📝"
-          title="Whisper"
-          description="Converts meeting audio into a transcript."
-          connected={true}
-        />
- 
-        <ZoomStatusItem
-          icon="🤖"
-          title="Ollama AI"
-          description="Generates summaries and extracts meeting intelligence."
-          connected={true}
-        />
- 
-        <ZoomStatusItem
-          icon="🗄"
-          title="MongoDB"
-          description="Stores meetings, transcripts and action items."
-          connected={true}
-        />
- 
-        <ZoomStatusItem
-          icon="💬"
-          title="Zoom Team Chat"
-          description={
-            chatConnected
-              ? "Meeting summaries can be sent to Zoom Chat."
-              : "Zoom access token is not configured."
-          }
-          connected={chatConnected}
-        />
-      </div>
- 
-      {!chatConnected && (
-        <div className="zoom-warning">
-          <strong>Zoom Chat requires configuration</strong>
-          <span>
-            The meeting processing pipeline is working, but Zoom Team Chat
-            delivery is currently disabled because{" "}
-            <code>ZOOM_ACCESS_TOKEN</code> is not configured.
-          </span>
+
+      {meetings.length === 0 ? (
+        <Empty message="No Slack Huddles recorded yet." icon="💬" />
+      ) : (
+        <div className="slack-meetings-list">
+          {meetings.slice(0, 6).map((meeting) => {
+            const isActive = meeting.status === "active";
+            const processing = meeting.processing_status || "pending";
+
+            return (
+              <div className="slack-meeting-row" key={meeting.meeting_id}>
+                <div className="slack-status-icon">💬</div>
+
+                <div className="slack-meeting-main">
+                  <strong>
+                    {meeting.huddle_id
+                      ? `Huddle ${meeting.huddle_id}`
+                      : "Slack Huddle"}
+                  </strong>
+                  <span className="meta">
+                    {timeAgo(meeting.started_at) || "Time unknown"}
+                    {" · "}
+                    {(meeting.participants || []).length} participant
+                    {(meeting.participants || []).length === 1 ? "" : "s"}
+                    {" · "}
+                    {formatHuddleDuration(meeting.duration_seconds)}
+                  </span>
+                </div>
+
+                <span
+                  className={`slack-live-dot ${isActive ? "online" : "offline"}`}
+                  title={isActive ? "Huddle active" : "Huddle ended"}
+                />
+
+                <span
+                  className={`status-pill ${
+                    processing === "completed"
+                      ? "status-completed"
+                      : processing === "processing"
+                      ? "status-progress"
+                      : processing === "failed"
+                      ? "status-overdue"
+                      : "status-pending"
+                  }`}
+                >
+                  {processing === "completed"
+                    ? "Processed"
+                    : processing === "processing"
+                    ? "Processing…"
+                    : processing === "failed"
+                    ? "Failed"
+                    : isActive
+                    ? "In Progress"
+                    : "Pending"}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
- 
-function ZoomStatusItem({ icon, title, description, connected }) {
+
+/* =========================================================
+   SLACK MEETINGS PAGE
+========================================================= */
+
+function SlackMeetingsPage() {
+  const [meetings, setMeetings] = useState([]);
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [details, setDetails] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function loadMeetings() {
+    try {
+      setLoading(true);
+      setError("");
+      const data = await getSlackMeetings();
+      setMeetings(normalizeMeetings(data));
+    } catch (err) {
+      setError(getApiError(err, "Could not load Slack meetings."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    queueMicrotask(loadMeetings);
+  }, []);
+
+  async function toggleMeeting(meeting) {
+    const id = getMeetingId(meeting);
+    if (!id) return;
+
+    if (expanded === id) {
+      setExpanded(null);
+      return;
+    }
+
+    setExpanded(id);
+    if (details[id]) return;
+
+    try {
+      const data = await getSlackMeeting(id);
+      setDetails((current) => ({ ...current, [id]: data }));
+    } catch (err) {
+      setError(getApiError(err, "Could not load Slack meeting details."));
+    }
+  }
+
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    if (!q) return meetings;
+
+    return meetings.filter((meeting) => {
+      const text = [
+        meeting?.huddle_id || "",
+        meeting?.summary || "",
+        meeting?.channel_id || "",
+        getMeetingId(meeting),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return text.includes(q);
+    });
+  }, [meetings, query]);
+
   return (
-    <div className={`zoom-status-item ${connected ? "connected" : "disconnected"}`}>
-      <div className="zoom-status-icon">{icon}</div>
- 
-      <div className="zoom-status-content">
-        <div className="zoom-status-title">
-          <strong>{title}</strong>
-          <span className={`connection-dot ${connected ? "online" : "offline"}`} />
+    <Page
+      title="Slack Meetings"
+      subtitle="Browse Slack Huddles captured and processed by the assistant."
+    >
+      <div className="search-toolbar">
+        <div className="search-input-wrapper">
+          <span>⌕</span>
+          <input
+            type="text"
+            placeholder="Search by huddle ID, channel or summary..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
- 
-        <p>{description}</p>
+        <span className="result-count">{filtered.length} meetings</span>
       </div>
- 
-      <span className="zoom-status-label">
-        {connected ? "Connected" : "Not Configured"}
-      </span>
-    </div>
+
+      {loading && <Loading message="Loading Slack meetings..." />}
+      {error && <ErrorPanel message={error} onRetry={loadMeetings} />}
+
+      {!loading && !error && filtered.length === 0 && (
+        <div className="panel">
+          <Empty
+            message={
+              query
+                ? `No Slack meetings found for "${query}".`
+                : "No Slack Huddles recorded yet."
+            }
+            icon="💬"
+          />
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div className="meeting-list">
+          {filtered.map((meeting) => {
+            const id = getMeetingId(meeting);
+            const open = expanded === id;
+            const detail = details[id] || meeting;
+            const isActive = meeting.status === "active";
+            const processing = meeting.processing_status || "pending";
+            const participantCount = (meeting.participants || []).length;
+
+            return (
+              <div
+                className={`panel meeting-card ${open ? "meeting-open" : ""}`}
+                key={id}
+              >
+                <button
+                  type="button"
+                  className="meeting-header-button"
+                  onClick={() => toggleMeeting(meeting)}
+                >
+                  <span className="expand-icon">{open ? "▼" : "▶"}</span>
+
+                  <div className="slack-status-icon">💬</div>
+
+                  <div className="meeting-title-block">
+                    <strong>
+                      {meeting.huddle_id
+                        ? `Huddle ${meeting.huddle_id}`
+                        : "Slack Huddle"}
+                    </strong>
+                    <span className="meta">
+                      {timeAgo(meeting.started_at) || "Time unknown"}
+                      {" · "}
+                      {participantCount} participant
+                      {participantCount === 1 ? "" : "s"}
+                      {" · "}
+                      {formatHuddleDuration(meeting.duration_seconds)}
+                    </span>
+                  </div>
+
+                  <span
+                    className={`status-pill ${
+                      processing === "completed"
+                        ? "status-completed"
+                        : processing === "processing"
+                        ? "status-progress"
+                        : processing === "failed"
+                        ? "status-overdue"
+                        : "status-pending"
+                    }`}
+                  >
+                    {processing === "completed"
+                      ? "Processed"
+                      : processing === "processing"
+                      ? "Processing…"
+                      : processing === "failed"
+                      ? "Failed"
+                      : isActive
+                      ? "In Progress"
+                      : "Pending"}
+                  </span>
+                </button>
+
+                {open && <MeetingDetails meeting={detail} />}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Page>
   );
 }
- 
+
 /* =========================================================
    DASHBOARD
 ========================================================= */
@@ -650,7 +825,7 @@ function Dashboard({ pushToast }) {
   }
  
   useEffect(() => {
-    loadDashboard();
+    queueMicrotask(loadDashboard);
   }, []);
  
   const pending = actionItems.filter((item) => item.status === "pending").length;
@@ -688,7 +863,7 @@ function Dashboard({ pushToast }) {
     >
       <UploadPanel onUploaded={loadDashboard} pushToast={pushToast} />
  
-      <ZoomIntegration />
+      <SlackMeetings />
  
       <div className="stats-grid">
         <StatCard label="Total Meetings" value={meetings.length} icon="◫" />
@@ -837,7 +1012,7 @@ function Meetings() {
   }
  
   useEffect(() => {
-    loadMeetings();
+    queueMicrotask(loadMeetings);
   }, []);
  
   async function toggleMeeting(meeting) {
@@ -1127,7 +1302,7 @@ function ActionItems({ pushToast }) {
   }
  
   useEffect(() => {
-    loadItems();
+    queueMicrotask(loadItems);
   }, []);
  
   const counts = useMemo(() => {
@@ -1152,20 +1327,18 @@ function ActionItems({ pushToast }) {
  
   async function toggleItem(item) {
     const meetingId = String(item?.meeting_id || item?.meetingId || "").trim();
-    const actionIndex = Number(
-      item?.action_index ?? item?.actionIndex ?? item?.__actionIndex
-    );
- 
+    const actionId = String(item?.action_id || item?.actionId || "").trim();
+
     if (!meetingId) {
       setError("This action item has no meeting ID.");
       return;
     }
- 
-    if (!Number.isInteger(actionIndex)) {
-      setError("This action item has an invalid action index.");
+
+    if (!actionId) {
+      setError("This action item has no action ID.");
       return;
     }
- 
+
     /*
       Checkbox is deliberately two-state:
       pending → completed
@@ -1174,40 +1347,38 @@ function ActionItems({ pushToast }) {
     */
     const oldStatus = item.status || "pending";
     const newStatus = oldStatus === "completed" ? "pending" : "completed";
-    const key = `${meetingId}-${actionIndex}`;
- 
+    const key = `${meetingId}-${actionId}`;
+
     if (updating === key) return;
- 
+
     setUpdating(key);
     setError("");
- 
-    console.log("Checkbox clicked:", { meetingId, actionIndex, oldStatus, newStatus });
- 
+
+    console.log("Checkbox clicked:", { meetingId, actionId, oldStatus, newStatus });
+
     try {
       /*
         IMPORTANT:
         Backend is called FIRST. React state changes only after
         the PATCH returns successfully.
       */
-      const response = await updateActionItem(meetingId, actionIndex, newStatus);
+      const response = await updateActionItem(meetingId, actionId, newStatus);
       console.log("PATCH successful:", response);
- 
+
       setItems((currentItems) =>
         currentItems.map((currentItem) => {
           const currentMeetingId = String(
             currentItem?.meeting_id || currentItem?.meetingId || ""
           ).trim();
- 
-          const currentIndex = Number(
-            currentItem?.action_index ??
-              currentItem?.actionIndex ??
-              currentItem?.__actionIndex
-          );
- 
-          if (currentMeetingId === meetingId && currentIndex === actionIndex) {
+
+          const currentActionId = String(
+            currentItem?.action_id || currentItem?.actionId || ""
+          ).trim();
+
+          if (currentMeetingId === meetingId && currentActionId === actionId) {
             return { ...currentItem, status: newStatus };
           }
- 
+
           return currentItem;
         })
       );
@@ -1275,11 +1446,11 @@ function ActionItems({ pushToast }) {
                 item?.meeting_id || item?.meetingId || ""
               ).trim();
  
-              const actionIndex = Number(
-                item?.action_index ?? item?.actionIndex ?? item?.__actionIndex ?? index
-              );
- 
-              const key = `${meetingId}-${actionIndex}`;
+              const actionId = String(
+                item?.action_id || item?.actionId || `idx-${index}`
+              ).trim();
+
+              const key = `${meetingId}-${actionId}`;
               const completed = item.status === "completed";
               const inProgress = item.status === "in_progress";
               const overdue = isOverdue(item);
@@ -1317,7 +1488,9 @@ function ActionItems({ pushToast }) {
                       {item?.due_date || "Not specified"}
                     </span>
  
-                    <small className="action-index">Action #{actionIndex}</small>
+                    <small className="action-index">
+                      Action #{item?.action_index ?? item?.__actionIndex ?? index}
+                    </small>
                   </div>
  
                   <span
@@ -1381,7 +1554,7 @@ function AskAI() {
     const q = (overrideText ?? question).trim();
     if (!q || thinking) return;
  
-    const userMessage = { id: `user-${Date.now()}`, role: "user", text: q };
+    const userMessage = { id: `user-${crypto.randomUUID()}`, role: "user", text: q };
  
     /* Functional update prevents old messages from being lost. */
     setMessages((current) => [...current, userMessage]);
@@ -1394,14 +1567,14 @@ function AskAI() {
  
       setMessages((current) => [
         ...current,
-        { id: `ai-${Date.now()}`, role: "ai", text: answer },
+        { id: `ai-${crypto.randomUUID()}`, role: "ai", text: answer },
       ]);
     } catch (err) {
       const message = getApiError(err, "Could not reach the AI backend.");
  
       setMessages((current) => [
         ...current,
-        { id: `error-${Date.now()}`, role: "ai", text: `Something went wrong: ${message}` },
+        { id: `error-${crypto.randomUUID()}`, role: "ai", text: `Something went wrong: ${message}` },
       ]);
     } finally {
       setThinking(false);
@@ -1652,6 +1825,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard pushToast={push} />} />
           <Route path="/meetings" element={<Meetings />} />
+          <Route path="/slack-meetings" element={<SlackMeetingsPage />} />
           <Route path="/action-items" element={<ActionItems pushToast={push} />} />
           <Route path="/ask" element={<AskAI />} />
           <Route path="/search" element={<Search />} />

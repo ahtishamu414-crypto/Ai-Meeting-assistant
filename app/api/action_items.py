@@ -286,6 +286,10 @@ def ensure_action_ids(meeting):
 
     for item in action_items:
 
+        had_action_id = bool(
+            isinstance(item, dict) and item.get("action_id")
+        )
+
         normalized = normalize_action_item(
             item
         )
@@ -297,10 +301,7 @@ def ensure_action_ids(meeting):
             normalized
         )
 
-        if (
-            item.get("action_id")
-            != normalized.get("action_id")
-        ):
+        if not had_action_id:
             changed = True
 
     # --------------------------------------------------------

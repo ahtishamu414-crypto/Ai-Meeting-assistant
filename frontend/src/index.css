@@ -829,6 +829,70 @@ button {
   overflow: hidden;
 }
 
+/* =========================================================
+   SLACK MEETINGS
+========================================================= */
+
+.slack-meetings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slack-meeting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  transition: background 0.15s ease;
+}
+
+.slack-meeting-row:hover {
+  background: var(--panel-raised);
+}
+
+.slack-status-icon {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 10px;
+  background: var(--violet-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.slack-meeting-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.slack-meeting-main strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.slack-live-dot {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  border-radius: 50%;
+}
+
+.slack-live-dot.online {
+  background: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-dim);
+}
+
+.slack-live-dot.offline {
+  background: var(--text-faint);
+}
+
 .meeting-header-button {
   width: 100%;
   display: flex;
