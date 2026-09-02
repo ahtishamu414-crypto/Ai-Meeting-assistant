@@ -94,7 +94,7 @@ def convert_to_clean_wav(
     )
 
     print(
-        "🔄 Converting audio to clean WAV..."
+        "Converting audio to clean WAV..."
     )
 
     command = [
@@ -257,7 +257,7 @@ def transcribe_audio(
         # ====================================================
 
         print(
-            "🎧 Transcribing audio..."
+            "Transcribing audio..."
         )
 
         result = whisper_model.transcribe(
@@ -271,7 +271,7 @@ def transcribe_audio(
         # ====================================================
 
         print(
-            "🗣 Running speaker diarization..."
+            "Running speaker diarization..."
         )
 
         output = diarization_pipeline(
@@ -380,12 +380,12 @@ def transcribe_audio(
                     )
 
                     print(
-                        "🗑 Temporary WAV removed"
+                        "Temporary WAV removed"
                     )
 
             except Exception as cleanup_error:
 
                 print(
-                    "⚠️ Could not remove temporary WAV:",
+                    "WARNING: Could not remove temporary WAV:",
                     cleanup_error
                 )

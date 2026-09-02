@@ -21,7 +21,7 @@ def get_models():
     if whisper_model is None:
         print("Loading Whisper...")
         whisper_model = whisper.load_model(WHISPER_MODEL)
-        print("✅ Whisper loaded")
+        print("Whisper loaded")
 
     if diarization_pipeline is None:
         print("Loading speaker diarization...")
@@ -31,7 +31,7 @@ def get_models():
             token=HF_TOKEN
         )
 
-        print("✅ Diarization loaded")
+        print("Diarization loaded")
 
 
 def get_speaker_at_time(diarization, start, end):
@@ -78,7 +78,7 @@ def transcribe_with_speakers(file_path):
 
     get_models()
 
-    print("🎧 Running Whisper...")
+    print("Running Whisper...")
 
     result = whisper_model.transcribe(
         file_path,
@@ -86,7 +86,7 @@ def transcribe_with_speakers(file_path):
         fp16=False
     )
 
-    print("🗣 Running speaker diarization...")
+    print("Running speaker diarization...")
 
     output = diarization_pipeline(file_path)
 

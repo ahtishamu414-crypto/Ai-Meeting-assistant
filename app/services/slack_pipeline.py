@@ -8,6 +8,7 @@ from app.services.transcription import transcribe_audio
 from app.services.summarizer import summarize_text
 from app.services.embedding import create_meeting_embedding
 from app.services.jira import create_jira_issue
+from app.services.slack_notification import send_meeting_summary_to_participants
 
 
 logger = logging.getLogger("slack_pipeline")
@@ -245,6 +246,12 @@ def _run_pipeline(meeting):
 
                 if issue and issue.get("key"):
 
+                    # Persist the created issue key onto the same
+                    # action item so it survives into MongoDB and
+                    # can be surfaced later (e.g. Slack DM, frontend)
+                    # without calling Jira again.
+                    item["jira_key"] = issue["key"]
+
                     logger.info(
                         "[SLACK PIPELINE] Jira issue created | "
                         "huddle=%s | key=%s",
@@ -268,6 +275,22 @@ def _run_pipeline(meeting):
                 huddle_id,
                 e
             )
+
+        # action_items may now carry jira_key fields set above;
+        # save that before moving on so a later failure (e.g.
+        # embedding) doesn't lose the Jira linkage already made.
+
+        slack_meetings_collection.update_one(
+            {
+                "huddle_id": huddle_id
+            },
+            {
+                "$set": {
+                    "action_items": action_items,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
 
         # ====================================================
         # EMBEDDING
@@ -317,6 +340,36 @@ def _run_pipeline(meeting):
             "[SLACK PIPELINE] Processing completed | huddle=%s",
             huddle_id
         )
+
+        # ====================================================
+        # SLACK NOTIFICATION
+        # ====================================================
+        #
+        # Best-effort, same isolation pattern as the Jira step
+        # above: the meeting has already succeeded and
+        # processing_status is already "completed" at this
+        # point, so a notification failure must never change
+        # that status or raise out of this try block.
+
+        try:
+
+            completed_meeting = slack_meetings_collection.find_one(
+                {
+                    "huddle_id": huddle_id
+                }
+            )
+
+            if completed_meeting:
+
+                send_meeting_summary_to_participants(completed_meeting)
+
+        except Exception:
+
+            logger.exception(
+                "[SLACK PIPELINE] Slack notification step failed | "
+                "huddle=%s",
+                huddle_id
+            )
 
     except Exception as e:
 
