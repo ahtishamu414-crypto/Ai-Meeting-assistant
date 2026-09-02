@@ -1,6 +1,19 @@
-from app.services.diarization import diarize_audio
+import os
+from dotenv import load_dotenv
+from pyannote.audio import Pipeline
 
-result = diarize_audio("uploads/The Irishman - Al Pacino Says You're Late Clip  Netflix.mp3")
+load_dotenv()
 
-for r in result:
-    print(r)
+token = os.getenv("HUGGINGFACE_TOKEN")
+
+if not token:
+    raise RuntimeError("HUGGINGFACE_TOKEN not found in .env")
+
+print("Loading speaker diarization model...")
+
+pipeline = Pipeline.from_pretrained(
+    "pyannote/speaker-diarization-3.1",
+    token=token
+)
+
+print("✅ Speaker diarization model loaded successfully!")
